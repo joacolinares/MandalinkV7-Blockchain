@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract ProyectoDarwin {
+contract multiPool {
     struct Purchase {
         uint256 poolId;
         uint256 position;
