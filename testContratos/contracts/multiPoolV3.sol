@@ -4,12 +4,13 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "hardhat/console.sol";
 
-contract multiPoolV2 {
+contract multiPoolV3 {
     struct Purchase {
         uint256 poolId; //Pool que entraste con esa compra
         uint256 position; //En la posicion que entraste en la Pool
         bool hasPassed;   //Si ya pasaste a la siguiente
         bool startedInThisPool; //Se pone en true si inciaste en la Pool 5,6 o 7
+        bool canContribute;
     }
 
     struct User {
@@ -83,6 +84,7 @@ contract multiPoolV2 {
 
     function joinPool(uint256 poolId, address referrer, address wallet) public {
         require(poolId >= 1 && poolId <= 7, "Pool no valido");
+        require(referrer != msg.sender, "No es posible que seas el mismo sponsor");
 
         User storage user = users[wallet];
         uint256 position = pools[poolId].numUsers;
@@ -108,13 +110,16 @@ contract multiPoolV2 {
         require(USDT.transfer(projectWallet, paymentForProject), "Pago al proyecto fallido"); //Paga el 10% del total
 
         // Crear una nueva entrada de compra
+       
         user.purchases.push(Purchase({
             poolId: poolId,
             position: position,
             hasPassed: false,
-            startedInThisPool: (poolId >= 5)
+            startedInThisPool: (poolId >= 5),
+            canContribute: true
         }));
 
+        
         pools[poolId].queue.push(wallet);
         pools[poolId].numUsers++;
 
@@ -162,7 +167,7 @@ contract multiPoolV2 {
         uint256 requiredReferrals = getRequiredReferrals(poolId);
 
         // Si la persona cumple con los referidos mínimos o inicio en la Pool 5 o superior
-        if (user.directReferrals >= requiredReferrals || purchase.startedInThisPool) {
+        if ((user.directReferrals >= requiredReferrals || purchase.startedInThisPool) && hasValidSubordinates(poolId, position)) {
             advancePool(userAddress, poolId, position);
         } else {
             user.missedOpportunities++;
@@ -172,7 +177,7 @@ contract multiPoolV2 {
             for (uint256 i = position + 1; i < pools[poolId].numUsers; i++) {
                 address nextUserAddress = pools[poolId].queue[i];
                 User storage nextUser = users[nextUserAddress];
-                if (nextUser.directReferrals >= requiredReferrals || purchase.startedInThisPool) {
+                if ((nextUser.directReferrals >= requiredReferrals || purchase.startedInThisPool) && hasValidSubordinates(poolId, position) ) {
                     advancePool(nextUserAddress, poolId, i);
                     break;
                 } else {
@@ -181,11 +186,73 @@ contract multiPoolV2 {
                 }
             }
         }
+
+
     }
 
+      struct infoSub {
+            address wallet;
+            uint256 l;
+        }
+        
+
+    function hasValidSubordinates(uint256 poolId, uint256 position) internal  returns (bool) {
+        uint256 subordinatesCount = 0;
+        infoSub[] memory arraySubordinantes = new infoSub[](3);
+        uint256 x;
+        // Verificar las 3 posiciones justo debajo del usuario
+
+        for (uint256 i = position + 1; i < pools[poolId].queue.length && subordinatesCount < 3; i++) {
+            address subordinateAddress = pools[poolId].queue[i];
+            User storage subordinate = users[subordinateAddress];
+ 
+            // Verificar que esta persona no haya avanzado en ningún pool
+            bool hasPassedInAnyPool = false;
 
 
+        for (uint256 j = subordinate.purchases.length; j > 0; j--) {
+            Purchase storage purchase = subordinate.purchases[j - 1];
 
+            // Verificamos si la compra es válida en este pool y si puede contribuir
+            if (purchase.poolId == poolId && purchase.canContribute) {
+                hasPassedInAnyPool = true;
+                arraySubordinantes[x] = infoSub(subordinateAddress, j - 1);
+                subordinate.purchases[j - 1].canContribute = false;
+                x++;
+                break;  // Nos detenemos después de encontrar la primera válida
+            }
+        }
+            // Si el usuario no ha pasado en este pool, lo contamos como válido
+            if (hasPassedInAnyPool) {
+                subordinatesCount++;
+            }
+        }
+
+
+        // Retorna true si al menos hay 3 subordinates que pueden ayudar a pasar a la personas han avanzado
+         if (subordinatesCount >= 3) {
+            for (uint256 k = 0; k < 3; k++) {
+                infoSub memory validSubordinate = arraySubordinantes[k];
+                User storage subordinateToUpdate = users[validSubordinate.wallet];
+               subordinateToUpdate.purchases[validSubordinate.l].canContribute = false;
+                
+            }
+           
+         }else{
+            for (uint256 k = 0; k < 3; k++) {
+                infoSub memory validSubordinate = arraySubordinantes[k];
+                if(validSubordinate.wallet == 0x0000000000000000000000000000000000000000){
+                    break;
+                }
+                User storage subordinateToUpdate = users[validSubordinate.wallet];
+                subordinateToUpdate.purchases[validSubordinate.l].canContribute = true;
+            }
+            return false;
+         }
+
+
+   return true;
+    }
 
 
     function advancePool(address userAddress, uint256 poolId, uint256 position) private {
@@ -193,11 +260,15 @@ contract multiPoolV2 {
         User storage user = users[userAddress];
         Purchase storage purchase = findPurchase(user, poolId, position);
        // require(!purchase.hasPassed, "Ya has pasado este pool");
+          
+
 
         // Avanza al siguiente Pool
         purchase.hasPassed = true;
+
         uint256 nextPoolId = poolId + 1;
         removeUserFromPool(poolId, position);
+
         // Actualizar las posiciones de los usuarios restantes REVISAR MUCHO CONSUMO DE GAS
         for (uint256 i = position; i < pools[poolId].queue.length; i++) {
             address remainingUserAddress = pools[poolId].queue[i];
@@ -223,13 +294,29 @@ contract multiPoolV2 {
 
     function removeUserFromPool(uint256 poolId, uint256 position) private {
         require(position < pools[poolId].queue.length, "Posicion no valida");
-        
-        // Eliminar al usuario de la posición actual
+
+        // Obtener la dirección del usuario en la posición actual
+        address userAddress = pools[poolId].queue[position];
+        User storage user = users[userAddress];
+
+        // Eliminar la compra correspondiente de su lista de compras
+        for (uint256 i = 0; i < user.purchases.length; i++) {
+            if (user.purchases[i].poolId == poolId && user.purchases[i].position == position) {
+                // Mover las compras una posición atrás para llenar el hueco
+                for (uint256 j = i; j < user.purchases.length - 1; j++) {
+                    user.purchases[j] = user.purchases[j + 1];
+                }
+                user.purchases.pop(); // Remover la última entrada que ahora está duplicada
+                break; // Salir del bucle una vez que encontramos y eliminamos la compra
+            }
+        }
+
+        // Eliminar al usuario de la posición actual en la queue
         for (uint256 i = position; i < pools[poolId].queue.length - 1; i++) {
             pools[poolId].queue[i] = pools[poolId].queue[i + 1];
         }
-        pools[poolId].queue.pop();
-        pools[poolId].numUsers--;
+        pools[poolId].queue.pop(); // Remover la última entrada
+        pools[poolId].numUsers--;  // Disminuir el conteo de usuarios en el pool
     }
 
 
@@ -250,7 +337,8 @@ contract multiPoolV2 {
             poolId: poolId,
             position: position,
             hasPassed: false,
-            startedInThisPool: (poolId >= 5)
+            startedInThisPool: (poolId >= 5),
+            canContribute: true
         }));
         
         pools[poolId].queue.push(wallet);

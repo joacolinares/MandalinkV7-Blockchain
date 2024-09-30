@@ -340,8 +340,8 @@
       ]
     },
     "/Users/joaquinlinares/Desktop/Joaco/Empresas/VulcanoBlockchainServices/MandaLink/testContratos/contracts/multiPoolV2.sol": {
-      "lastModificationDate": 1725316742993,
-      "contentHash": "ef4df1ba6ee48cd663930d328ce66a99",
+      "lastModificationDate": 1725569325880,
+      "contentHash": "1258d555eed8c8bdfa0e4c6dce3e4467",
       "sourceName": "contracts/multiPoolV2.sol",
       "solcConfig": {
         "version": "0.8.24",
@@ -376,6 +376,45 @@
       ],
       "artifacts": [
         "multiPoolV2"
+      ]
+    },
+    "/Users/joaquinlinares/Desktop/Joaco/Empresas/VulcanoBlockchainServices/MandaLink/testContratos/contracts/multiPoolV3.sol": {
+      "lastModificationDate": 1727543586378,
+      "contentHash": "751280ccc4d7e1b9ebd59d576db6f952",
+      "sourceName": "contracts/multiPoolV3.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "hardhat/console.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "multiPoolV3"
       ]
     }
   }

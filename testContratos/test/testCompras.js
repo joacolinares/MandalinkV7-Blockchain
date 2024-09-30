@@ -4,7 +4,6 @@ const {
 } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
-
 describe("Test", function () {
   async function deployOneYearLockFixture() {
 
@@ -184,12 +183,15 @@ describe("Test", function () {
         await multiPool.connect(User2).joinPool(1, User1.address, User2.address); 
         await despuesEjecutar(User2)
         
+
+  
         console.log("SEGUNDA COMPRA USUARIO 2 COMPRA REFIRIENDO AL 1 LA POOL 1")
 
      //   await antesEjecutar(1, User2)
         await multiPool.connect(User2).joinPool(1, User1.address, User2.address); 
         await despuesEjecutar(User2)
-
+        const totalPayed =  await multiPool.totalPayed();
+        console.log(totalPayed)
 
         console.log("TERCERA COMPRA USUARIO 3 COMPRA REFIRIENDO AL 2 LA POOL 1")
 
@@ -316,7 +318,6 @@ describe("Test", function () {
             //  await antesEjecutar(2, User3)
             await multiPool.connect(User3).joinPool(7, User2.address, User3.address); 
             await despuesEjecutar(User3)
-
       });
   });
 
