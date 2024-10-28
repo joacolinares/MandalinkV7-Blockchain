@@ -529,7 +529,7 @@ const {
         //    await multiPool.connect(User4).joinPool(3, User2.address, User4.address); //Al entrar esta segunda persona con el referido del 2, ya el usuario 2 tiene 2 directos y puede pasar
 
 
-
+        //asd
         //    const Pool3Despues =  await multiPool.pools(3);
         //    const Pool4Despues =  await multiPool.pools(4);
 

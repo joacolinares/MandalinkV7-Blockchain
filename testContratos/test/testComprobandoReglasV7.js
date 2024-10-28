@@ -692,7 +692,7 @@ const {
           const getCanPass1 =  await multiPool.getCanPass(1);
           const getCanPass22 =  await multiPool.getCanPass(2);
           const getCanPass7 =  await multiPool.getCanPass(2);
-          
+          //asd
           console.log("////POOL 1 ////")
           console.log("getCanPass: ",getCanPass1)
           console.log("numUsers: ",Pool1Antes2.numUsers)

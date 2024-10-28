@@ -198,7 +198,7 @@ contract multiPoolV7 {
                 pools[1].queue.pop();
             }
 
-            // Remover los primeros 3 usuarios de la lista `canPass` de Pool 1
+            // Remover los primeros 3 usuarios de la lista `canPass` de Pool 1a
             for (uint256 i = 0; i < pools[1].canPass.length - 3; i++) {
                 pools[1].canPass[i] = pools[1].canPass[i + 3];
             }

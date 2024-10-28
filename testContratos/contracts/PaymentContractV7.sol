@@ -71,6 +71,6 @@ contract PaymentContractV7 is Ownable {
          multiPoolAddress = _multiPoolAddress;
     }
 
-    //AGREGAR LOGICA DE EMERGENCIA
+    //AGREGAR LOGICA DE EMERGENCIA a
 
 }
