@@ -3,8 +3,9 @@ pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "hardhat/console.sol";
+import "./PaymentContract.sol"; // Importamos el contrato de pagos
 
-contract multiPoolV3 {
+contract multiPoolV4 {
     struct Purchase {
         uint256 poolId; //Pool que entraste con esa compra
         uint256 position; //En la posicion que entraste en la Pool
@@ -22,6 +23,7 @@ contract multiPoolV3 {
         uint256 totalTree; //acumulacion del extra
     }
 
+
     struct Pool {
         uint256 price; //Precio de Pool
         uint256 numUsers; //Cantidad de usuarios en Pool
@@ -33,6 +35,7 @@ contract multiPoolV3 {
     }
 
     IERC20 public USDT;  // Token USDT
+    PaymentContract public paymentContract;
     mapping(address => User) public users;
     mapping(uint256 => Pool) public pools;
     Level[] public levels;
@@ -44,15 +47,14 @@ contract multiPoolV3 {
     uint256 public totalDistributed;    //NUEVO
     uint256 public totalExtra;  //NUEVO
 
-    event PoolJoined(address indexed user, uint256 indexed poolId, uint256 position);
-    event PoolAdvanced(address indexed user, uint256 indexed fromPool, uint256 indexed toPool, uint256 position);
-    event PaymentDistributed(address indexed user, uint256 amount, uint256 poolId, uint256 position);
-    event ExceedingPayment(address indexed user, uint256 amount, uint256 poolId, uint256 position);
-    event MissedOpportunity(address indexed user, uint256 poolId, uint256 missedCount);
+    mapping(address => mapping(uint256 => uint256)) public referralsByLevel;
+    mapping(address => mapping(uint256 => uint256)) public amountInvestInLevels;
+    mapping(address => mapping(address => uint256)) public amountInvestInLevelsPerWallet;
 
-    constructor(address _usdtAddress, address _projectWallet) {
-        projectWallet = _projectWallet;
+
+    constructor(address _usdtAddress, address _paymentContractAddress) {
         USDT = IERC20(_usdtAddress);
+        paymentContract = PaymentContract(_paymentContractAddress); // Inicializamos el contrato de pagos
 
         // Inicialización de Pools
         pools[1].price = 50 * 1e6;  // Suponiendo que USDT tiene 6 decimales
@@ -99,18 +101,18 @@ contract multiPoolV3 {
 
         // Transferir USDT al contrato
         if(wallet != address(this)){
-            require(USDT.transferFrom(wallet, address(this), pools[poolId].price), "Transferencia fallida");
+            require(USDT.transferFrom(wallet, address(paymentContract), pools[poolId].price), "Transferencia fallida");
         }
         totalPayed +=  pools[poolId].price;
+        
         // Reparto del dinero
         uint256 poolPrice = pools[poolId].price;
         uint256 paymentForProject = (poolPrice * projectFeePercentage) / 100;
 
         // Pagos
-        require(USDT.transfer(projectWallet, paymentForProject), "Pago al proyecto fallido"); //Paga el 10% del total
-
+       // require(USDT.transfer(projectWallet, paymentForProject), "Pago al proyecto fallido"); //Paga el 10% del total
+            paymentContract.distributeProjectFee(pools[poolId].price, true, msg.sender);
         // Crear una nueva entrada de compra
-       
         user.purchases.push(Purchase({
             poolId: poolId,
             position: position,
@@ -123,8 +125,6 @@ contract multiPoolV3 {
         pools[poolId].queue.push(wallet);
         pools[poolId].numUsers++;
 
-        emit PoolJoined(wallet, poolId, position);
-
         // Repartir el pago a los referidos hasta 7 niveles
         distributeReferralPayments(wallet, poolId);
 
@@ -132,26 +132,40 @@ contract multiPoolV3 {
         if (position >= 3) {
             tryAdvance(poolId, 0);
         }
+
     }
 
     function distributeReferralPayments(address user, uint256 poolId) internal {
         address currentReferrer = users[user].referrer;
+        address[] memory referrers = new address[](levels.length);
+        uint256[] memory payments = new uint256[](levels.length);
+        uint256 referrerCount = 0;
+
         for (uint256 i = 0; i < levels.length && currentReferrer != address(0); i++) {
+            if (currentReferrer == address(0)) {
+               break; // Detener el ciclo si la dirección es 0x0000000000000000000000000000000000000000
+            }
             uint256 payment = (pools[poolId].price * levels[i].percentage) / 100;
-            require(USDT.transfer(currentReferrer, payment), "Pago al referido fallido");
-            users[currentReferrer].totalTree += payment;
-            emit PaymentDistributed(currentReferrer, payment, poolId, i+1);
+            referrers[referrerCount] = currentReferrer;
+            payments[referrerCount] = payment;
+            referrerCount++;
             totalDistributed +=  payment;
+            users[currentReferrer].totalTree += payment;
+
+            if(amountInvestInLevelsPerWallet[currentReferrer][user] == 0){
+                amountInvestInLevelsPerWallet[currentReferrer][user] += payment;
+                amountInvestInLevels[currentReferrer][i] += payment;
+                referralsByLevel[currentReferrer][i]++;
+            }else{
+                amountInvestInLevelsPerWallet[currentReferrer][user] += payment;
+                amountInvestInLevels[currentReferrer][i] += payment;
+            }
 
             currentReferrer = users[currentReferrer].referrer;
 
-
-            // Incrementar el contador de referidos directos para el primer nivel
-          //  if (i == 0) {
-          //      users[currentReferrer].directReferrals++;
-          //  }
         }
-     
+        // Llamar al contrato de pagos para repartir entre los referidos
+        paymentContract.distributeReferralPayments(referrers, payments);
     }
 
     function tryAdvance(uint256 poolId, uint256 position) internal {
@@ -176,7 +190,6 @@ contract multiPoolV3 {
                 }
         } else {
             user.missedOpportunities++;
-            emit MissedOpportunity(userAddress, poolId, user.missedOpportunities);
 
             // Buscar si hay alguien debajo que cumpla con los requisitos
             for (uint256 i = position + 1; i < pools[poolId].numUsers; i++) {
@@ -192,7 +205,6 @@ contract multiPoolV3 {
                     break;
                 } else {
                     nextUser.missedOpportunities++;
-                    emit MissedOpportunity(nextUserAddress, poolId, nextUser.missedOpportunities);
                 }
             }
         }
@@ -287,8 +299,9 @@ contract multiPoolV3 {
             remainingPurchase.position = i;  // Actualizar la posición
         }
 
-        require(USDT.transfer(userAddress, payForExtraInPools[poolId]), "Pago de avance fallido"); //Pago del excedente
-        emit ExceedingPayment(userAddress, payForExtraInPools[poolId], poolId, position);
+       // require(USDT.transfer(userAddress, payForExtraInPools[poolId]), "Pago de avance fallido"); //Pago del excedente
+        paymentContract.distributeExceedingPayment(userAddress, payForExtraInPools[poolId]);
+       
         totalExtra += payForExtraInPools[poolId];
         user.payedExtra += payForExtraInPools[poolId];
 
@@ -297,7 +310,6 @@ contract multiPoolV3 {
             movePositions(1, 3);
         } else {
             joinNextPool(nextPoolId, userAddress);  // Llamada directa a la función `joinPool` sin referidos
-            emit PoolAdvanced(userAddress, poolId, nextPoolId, position);
         }
       
     }
@@ -340,8 +352,8 @@ contract multiPoolV3 {
         uint256 paymentForProject = (poolPrice * projectFeePercentage) / 100;
        
         // Pagos
-        require(USDT.transfer(projectWallet, paymentForProject), "Pago al proyecto fallido"); //Paga el 10% del total
-        
+       // require(USDT.transfer(projectWallet, paymentForProject), "Pago al proyecto fallido"); //Paga el 10% del total
+         paymentContract.distributeProjectFee(pools[poolId].price, false, wallet);
         // Crear una nueva entrada de compra
         user.purchases.push(Purchase({
             poolId: poolId,
@@ -354,7 +366,6 @@ contract multiPoolV3 {
         pools[poolId].queue.push(wallet);
         pools[poolId].numUsers++;
 
-        emit PoolJoined(wallet, poolId, position);
 
         // Repartir el pago a los referidos hasta 7 niveles
         distributeReferralPayments(wallet, poolId);
@@ -426,4 +437,23 @@ contract multiPoolV3 {
     function getInfoUser(address userAddress) public view returns (address, uint256, uint256) {
         return( users[userAddress].referrer, users[userAddress].directReferrals, users[userAddress].missedOpportunities); 
     }
+
+
+    function getReferralCountsByLevel(address user) public view returns (uint256[] memory) {
+        uint256[] memory referralCounts = new uint256[](levels.length);
+        
+        address currentReferrer = users[user].referrer;
+        
+        for (uint256 i = 0; i < levels.length; i++) {
+            if (currentReferrer == address(0)) {
+                break;  // No más referidos en niveles superiores
+            }
+            
+            referralCounts[i] = users[currentReferrer].directReferrals;
+            currentReferrer = users[currentReferrer].referrer;
+        }
+
+        return referralCounts;
+    }
+
 }
