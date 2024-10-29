@@ -8,20 +8,23 @@ import "./PaymentContractV7.sol"; // Importamos el contrato de pagos
 contract multiPoolV7 {
     IERC20 public USDT;  
     PaymentContractV7 public paymentContract;
+    uint256 public constant TOTAL_REFERRERS = 7;
     
     struct Pool {
         uint256 price; //Precio de Pool
         uint256 numUsers; //Cantidad de usuarios en Pool
-        address[] queue; // Lista de personas en la Pool
+       // address[] queue; // Lista de personas en la Pool
         address[] canPass; // Puede pasar
         uint256 newUsers; //Para acumular si llega a 3 personas
         uint256 minRefferals; //Minimo de referidos en esta pool
+        uint256 indexCanPass; //Indice que lleva la ultima persona empujada de canPass para evitar loops
     }
 
     mapping(uint256 => Pool) public pools;
     mapping(address => address) public directReferrals;
     mapping(address => uint256) public numberOfDirects;
 
+    mapping(address => bool) public canPassAllPools;
 
     constructor(address _usdtAddress, address _paymentContractAddress) {
         USDT = IERC20(_usdtAddress);
@@ -57,20 +60,16 @@ contract multiPoolV7 {
             numberOfDirects[referrer]++;
         }
       
-        //Agrega la billetera compradora a la lista
-        pools[poolId].queue.push(msg.sender);
-
-        // console.log("Num Users: ",pools[3].numUsers);
-        // console.log("Cantidad de personas array: ",pools[3].queue.length);
+        if(poolId >= 5){
+            canPassAllPools[msg.sender] = true;
+        }
 
         //Si tiene la cantidad igual o mayor de directos lo agregar en las personas las cuales pueden pasar
         //Si tiene cantidad minima de directos entra o si entra en Pool 5,6 o 7 no deberia pedir
-        if(numberOfDirects[msg.sender] >= pools[poolId].minRefferals || poolId >= 5){
+        if(numberOfDirects[msg.sender] >= pools[poolId].minRefferals || canPassAllPools[msg.sender]){
             pools[poolId].canPass.push(msg.sender);
         }
         
-        // console.log("Cantidad de personas en canPass: ",pools[3].canPass.length);
-
         //Guarda en referrers los referidos en un array de dimension limitada
         //El FOR lo veo importante ya que asi se puede recorrer a los referidos, es un for que hace algo simple y esta limitado a 
         //7 vueltas, no lo veo una amenaza en gas
@@ -78,26 +77,22 @@ contract multiPoolV7 {
         address[] memory referrers = new address[](7);
         address currentReferrer = directReferrals[msg.sender];
 
-        for (uint256 i = 0; i < referrers.length && currentReferrer != address(0); i++) {
+        for (uint256 i = 0; i < TOTAL_REFERRERS && currentReferrer != address(0); ++i) {
             if (currentReferrer == address(0)) {
                break; // Detener el ciclo si la dirección es 0x0000000000000000000000000000000000000000
             }
             referrers[i] = currentReferrer;
             currentReferrer = directReferrals[currentReferrer];
         }
-        paymentContract.distributeReferralPayments(referrers, pools[poolId].price); //REGLA 2 / 3
+
+        //Aca se llama dos veces ya que son dos logicas distintas, consume mucho gas que sean 2 en vez de una?
+        paymentContract.saveReferralPayments(referrers, pools[poolId].price); //REGLA 2 / 3
 
         //Envia pago de 10% a proyecto
-        paymentContract.distributeProjectFee(pools[poolId].price); //REGLA 3
+        paymentContract.saveProjectFee(pools[poolId].price); //REGLA 3
 
-        //Suma 1 persona nueva a la Pool si es que no es la primera persona
-        
-        //pools[poolId].newUsers++;
-        
         //Suma 1 persona al total de la Pool
         pools[poolId].numUsers++;
-
-       
 
         tryAdvance(poolId);
     }
@@ -105,8 +100,8 @@ contract multiPoolV7 {
     function tryAdvance(uint256 poolId) internal {
         require(poolId >= 1 && poolId <= 7, "Pool no valido");
 
-        if(pools[poolId].newUsers >= 3 && pools[poolId].canPass.length >= 1){
-            joinNextPool(poolId);
+        if(pools[poolId].newUsers >= 3 && pools[poolId].canPass.length - pools[poolId].indexCanPass >= 1){
+            _joinNextPool(poolId);
         }else{
             //Suma 1 persona nueva a la Pool si es que no es la primera persona
             pools[poolId].newUsers++;
@@ -114,32 +109,16 @@ contract multiPoolV7 {
        
     }
 
-    function joinNextPool(uint256 poolId) internal  {
-        require(poolId >= 1 && poolId <= 7, "Pool no valido");
-       
-       
-        //Si la Pool es diferente de 7, si es 7 significa que ya llego al fin
-        if(poolId != 7){
-            pools[poolId + 1].queue.push(pools[poolId].canPass[0]);
-        }
-        
-        address actualNewWallet = pools[poolId].canPass[0];
+    function _joinNextPool(uint256 poolId) internal  {
+        //Utilizamos la primera persona en al lista despues del ultimo movido
+        address actualNewWallet = pools[poolId].canPass[pools[poolId].indexCanPass];
 
-        //Elimina el primero de la lista de persona que pueden pasar de esta pool
-        for (uint256 i = 0; i < pools[poolId].canPass.length - 1; i++) {
-            pools[poolId].canPass[i] = pools[poolId].canPass[i + 1]; //REVISAR FOR DINAMICO!!
-        }
-        
-        pools[poolId].canPass.pop();
-
-        //Elimina el primero de la lista de persona de esta pool
-        for (uint256 i = 0; i < pools[poolId].queue.length - 1; i++) {
-            pools[poolId].queue[i] = pools[poolId].queue[i + 1]; //REVISAR FOR DINAMICO!!
-        }
-        
-        pools[poolId].queue.pop();        
+        //Aumentamos en 1 el indice ya que se consumio una persona de la pool que sera movida a la siguiente
+        pools[poolId].indexCanPass++;
 
         //Eliminamos las 3 personas nuevas de la Pool actual
+        //No se movieron a ningun lugar, pero ya que fueron "usados" para mover a alguien dejar de servir y se los quita de newUsers
+        //ya que nos son personas nuevas
         pools[poolId].newUsers = pools[poolId].newUsers - 3;
 
         pools[poolId].numUsers--;
@@ -148,7 +127,7 @@ contract multiPoolV7 {
         
         //Agregamos a la nueva Pool la persona que estaba primera en casPass de la Pool previa si es que cumple con los minimos
         //directos de esta siguiente Pool
-        if(numberOfDirects[actualNewWallet] >= pools[poolId + 1].minRefferals && poolId != 7){
+        if(numberOfDirects[actualNewWallet] >= pools[poolId + 1].minRefferals && poolId != 7 || canPassAllPools[actualNewWallet] && poolId != 7){
             pools[poolId + 1].canPass.push(actualNewWallet);
         }
 
@@ -156,7 +135,7 @@ contract multiPoolV7 {
         address[] memory referrers = new address[](7);
         address currentReferrer = directReferrals[actualNewWallet];
 
-        for (uint256 i = 0; i < referrers.length && currentReferrer != address(0); i++) {
+        for (uint256 i = 0; i < TOTAL_REFERRERS && currentReferrer != address(0); ++i) {
             if (currentReferrer == address(0)) {
                break; // Detener el ciclo si la dirección es 0x0000000000000000000000000000000000000000
             }
@@ -165,89 +144,54 @@ contract multiPoolV7 {
         }
 
         if(poolId != 7){
-            paymentContract.distributeReferralPayments(referrers, pools[poolId + 1].price); //REGLA 2 / 3
-            paymentContract.distributeProjectFee(pools[poolId + 1].price); //REGLA 3
+            paymentContract.saveReferralPayments(referrers, pools[poolId + 1].price); //REGLA 2 / 3
+            paymentContract.saveProjectFee(pools[poolId + 1].price); //REGLA 3
         }
         //Paga el excedente
-        paymentContract.distributeExceedingPayment(actualNewWallet, poolId);
+        paymentContract.saveExceedingPayment(actualNewWallet, poolId);
 
         if(poolId != 7){
-           // pools[poolId + 1].newUsers++;
             tryAdvance(poolId + 1);
         }else{
             //Si es Pool 7 y termino el recorrido debe empujar 3 personas de la pool 1 a la 2
-            require(pools[1].queue.length >= 3, "Debe haber al menos 3 personas en la Pool 1");
-            require(pools[1].canPass.length >= 3, "Debe haber al menos 3 personas en canPass de la Pool 1");
+            // require(pools[1].queue.length >= 3, "Debe haber al menos 3 personas en la Pool 1");
+            require(pools[1].canPass.length - pools[1].indexCanPass >= 3, "Debe haber al menos 3 personas en canPass de la Pool 1");
 
-            // Mover las primeras 3 personas de `queue` y `canPass` de Pool 1 a Pool 2
-            for (uint256 i = 0; i < 3; i++) {
-                address userToMove = pools[1].queue[i]; 
-                pools[2].queue.push(userToMove); 
+            // Mover las primeras 3 personas de  `canPass` de Pool 1 a Pool 2. Aca se tienen que mover las primeras 3 personas, pero como
+            //canPass TENDRIA (Falta comprobar) que estar ordenado en Pool 1 (Ya que toda la gente que entra en Pool 1 va directos a canPass)
+            //se mueven las 3 primeras
+            for (uint256 i = 0; i < 3; ++i) {
+                address userToMove = pools[1].canPass[pools[1].indexCanPass]; 
+               // pools[2].queue.push(userToMove); 
 
-                if (numberOfDirects[userToMove] >= pools[2].minRefferals) {
+                if (numberOfDirects[userToMove] >= pools[2].minRefferals || canPassAllPools[userToMove]) {
                     pools[2].canPass.push(userToMove);
                 }
+                //Sacamos 3 personas del canPass de la Pool 1 ya que fueron movidos a la Pool 2
+                pools[1].indexCanPass++;
             }
-
-            // Remover los primeros 3 usuarios de la lista `queue` de Pool 1
-            for (uint256 i = 0; i < pools[1].queue.length - 3; i++) {
-                pools[1].queue[i] = pools[1].queue[i + 3];
-            }
-
-            for (uint256 i = 0; i < 3; i++) {
-                pools[1].queue.pop();
-            }
-
-            // Remover los primeros 3 usuarios de la lista `canPass` de Pool 1a
-            for (uint256 i = 0; i < pools[1].canPass.length - 3; i++) {
-                pools[1].canPass[i] = pools[1].canPass[i + 3];
-            }
-
-            for (uint256 i = 0; i < 3; i++) {
-                pools[1].canPass.pop();
-            }
-
+            
+            //Restamos 3 personas en Pool 1
             pools[1].numUsers -= 3;
+            //Sumamos 3 personas en Pool  2
             pools[2].numUsers += 3;
-            console.log("cantidad!!!!");
-            console.log(pools[2].newUsers);
+            //Ponemos 3 personas nuevas (Disponible para empujar en Pool 2)
             pools[2].newUsers += 3;
-            console.log("cantidad2!!!!");
-            console.log(pools[2].newUsers);
-            // Llamamos a `tryAdvance` para verificar si pueden avanzar en Pool 2
-           // tryAdvance(2); REVISAR SI DEJAR O NO PORQUE SEGUIRIA SIEMPRE DANDO VUELTAS, ADEMAS ESTA SUMANDO UNA PERSONA DE MAS EN newUsers
-        }
 
-    }
-   
-    function getQueue(uint256 poolId) public view returns (address[] memory) {
-        require(poolId >= 1 && poolId <= 7, "Pool no valida");                      //EN PRODUCCION BORRAR!!!
-        return pools[poolId].queue;
+            //REVISAR GUILLE
+            // Llamamos a `tryAdvance` para verificar si pueden avanzar en Pool 2
+            // tryAdvance(2); REVISAR SI DEJAR O NO PORQUE SEGUIRIA SIEMPRE DANDO VUELTAS, ADEMAS ESTA SUMANDO UNA PERSONA DE MAS EN newUsers
+            
+        }
+        
     }
 
     function getCanPass(uint256 poolId) public view returns (address[] memory) { //EN PRODUCCION BORRAR!!!
         require(poolId >= 1 && poolId <= 7, "Pool no valida");
         return pools[poolId].canPass;
     }
-
-
-
-
-    //JOACO
-
-    //REVISAR EL TEMA DE POOL 5,6 Y 7 QUE PASAN SI O SI, SI FUNCIONA
-
-
-
+}
 
     //GUILLE
     //POSIBILIDAD DE PROBLEMA DE GAS, DEBIDO A QUE SIEMPRE ESTA EMPUJANDO GENTE, ES DECIR
     //EMPUJA DESDE LA POOL 1 A LA 2, ASI HASTA LA 7 Y SI SIGUE HABIENDO GENTE DISPONBIBLE SE REPITE INDEFINIDAMENTE
-
-    //REVISAR SI  pools[poolId].queue ES NECESARIO, YA QUE ES UN ARRAY QUE LO UTILIZO PARA VER LAS WALLETS QUE ESTAN DENTRO
-    //PERO NI EN LA DAPP NI EN LA LOGICA DE NEGOCIO TIENEN USO
-
-    //SOLUCIONAR LOS FORS DINAMICOS, 
-
-    //BUSCAR CUALQUIER TIPO DE FUNCION / LOGICA QUE SEA ILIMITADO O CONSUMA GAS DE MAS
-}
